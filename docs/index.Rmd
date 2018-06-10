@@ -1,0 +1,184 @@
+--- 
+title: "데이터 프레임 저장에 유용한 패키지 (fst)" 
+author: "Sung" 
+date: "2018-06-10" 
+output: 
+  html_document: 
+    toc: true 
+    toc_float: true 
+mainfont: NanumGothic 
+fontsize: 12pt 
+lang: Korean 
+--- 
+```{r include=F} 
+# global option 
+knitr::opts_chunk$set( 
+  comment = "##>", 
+  collapse = T, 
+  eval = T, 
+  tidy = T, 
+  message = F, 
+  warning = F, 
+  fig.width = 4, 
+  fig.height = 4 
+) 
+# global option 
+options("scipen" = 100, digits = 3) 
+``` 
+
+## Overview 
+`R`에서 데이터를 다룰 때 많이 쓰는 형태가 데이터 프레임(data frame)이다. 다양한 파일들(txt, csv, xlsx 등)을 불러올 때도 모두 데이터 프레임으로 저장이 되고, 필자의 경우는 `R`로 간단하게 사용하기 위해 `write_rds()`함수를 통해 `rds`파일로 저장하면서 사용하고 있다. 참고로 `dplyr` 패키지와 `%>%`(pipe operation)을 이용하여 데이터 프레임을 다룰 때 효율적으로 사용할 수 있다. 
+
+[fst][fstRepo] 패키지는 `R`의 데이터 프레임을 쉽고 빠르게 직렬화하는 패키지라고 한다. 공식 깃허브에 올라온 자료에는 [fst][fstRepo] 패키지의 읽고 쓰는 퍼포먼스가 아주 높다고 하니, 대용량 데이터를 다루는 업무에서 효율적으로 동작할 것으로 보인다. 
+
+
+## Usage and compression 
+### Basic usage 
+
+[fst][fstRepo] 패키지는 `write.fst()`함수 또는 `write_fst()`함수를 사용하여 데이터 프레임을 저장하고, `read.fst()`함수 또는 `read_fst()`함수를 사용하여 데이터 프레임을 불러온다. 
+
+```{r, eval = F} 
+require(fst) 
+
+# Store the data frame to disk 
+write_fst(df, "dataset.fst") 
+   
+# Retrieve the data frame again 
+df <- read_fst("dataset.fst") 
+``` 
+
+### Random access 
+
+`fst` 파일은 데이터의 일부를 추출할 수 있다. 아래는 2000~5000번째 로우과 `Logical`, `Factor` 컬럼을 불러오는데, 이는 **파일 전체를 불러오지 않고**, 일부 데이터를 불러올 수 있다. 이것이 `readRDS()`과 `read_feather()`함수와의 차이이다. 굳이 데이터를 쪼개서 불러들일 필요성을 느끼지 못하지만 데이터가 아주*10 방대한 경우에는 필요해보인다.  
+
+```{r, eval = F} 
+  df_subset <- read_fst("dataset.fst", c("Logical", "Factor"), from = 2000, to = 5000) 
+``` 
+
+
+### Compression 
+
+뛰나어고 빠른 압축을 위해 [LZ4][lz4Repo]와 [ZSTD][zstdRepo] 압축 알고리즘을 사용한다고 한다. (잘 모르는 내용이다.) 이를 위한 압축팩터(compression factor) 설정이 가능하다. (0 ~ 100: maximum) 
+
+압축은 `fst` 파일에 대한 용량을 줄여주지만, 읽고 쓰는 속도가 증가할 수도 있다. 
+
+```{r, eval = F} 
+write_fst(df, "dataset.fst", 100)  # use maximum compression 
+``` 
+
+
+### comparison 
+
+속도는 빠른 것으로 보인다. 저장되는 용량은 `fst`파일이 다른 파일에 비해 작아서 여러가지로 효율적이다. 확인해본 결과 4.19기가 rds 파일을 fst 파일로 저장하면 1기가 정도로 줄어든다. 
+```{r, eval = F} 
+library(tibble) 
+library(fst) 
+library(dplyr) 
+library(readr) 
+library(data.table) 
+
+# 5000만 건 데이터 생성 
+nr_of_rows <- 5e7 
+
+set.seed(1) 
+df <- tibble(Logical = sample(c(TRUE, FALSE, NA), prob = c(0.85, 0.1, 0.05), nr_of_rows, replace = TRUE), 
+             Integer = sample(1L:100L, nr_of_rows, replace = TRUE), 
+             Real = sample(sample(1:10000, 20) / 100, nr_of_rows, replace = TRUE), 
+             Factor = as.factor(sample(labels(UScitiesD), nr_of_rows, replace = TRUE))) 
+
+# The execution time for save fst file 
+time_fst_write <- system.time(write_fst(df, "dataset.fst"))[3] 
+
+# The execution time for read fst file 
+time_fst_read <- system.time(read_fst("dataset.fst"))[3] 
+
+# The execution time for save csv file (base function) 
+time_csv_write_base <- system.time(write.csv(df, "dataset.csv"))[3] 
+
+# The execution time for read csv file (base function) 
+time_csv_read_base <- system.time(read.csv("dataset.csv"))[3] 
+
+# The execution time for save csv file (readr package function) 
+time_csv_write_readr <- system.time(write_csv(df, "dataset.csv"))[3] 
+
+# The execution time for read csv file (readr package function) 
+time_csv_read_datatable <- system.time(read_csv("dataset.csv"))[3] 
+
+# The execution time for save csv file (data.table package function) 
+time_csv_write_datatable <- system.time(fwrite(df, "dataset.csv"))[3] 
+
+# The execution time for read csv file (data.table package function) 
+time_csv_read_fread <- system.time(fread("dataset.csv"))[3] 
+
+# The execution time for save rds file  
+time_rds_write_readr <- system.time(write_rds(df, "dataset.rds"))[3] 
+
+# The execution time for read rds file 
+time_rds_read_readr <- system.time(read_rds("dataset.rds"))[3] 
+
+comparision_spd <- data.frame(time_fst_write = time_fst_write, 
+                              time_fst_read = time_fst_read, 
+                              time_csv_write_base = time_csv_write_base, 
+                              time_csv_read_base = time_csv_read_base, 
+                              time_csv_write_readr = time_csv_write_readr, 
+                              time_csv_read_datatable = time_csv_read_datatable, 
+                              time_csv_write_datatable = time_csv_write_datatable, 
+                              time_rds_read_readr = time_rds_read_readr, 
+                              time_rds_write_readr = time_rds_write_readr) 
+
+write_fst(comparision_spd, "comparision_spd.fst") 
+
+comparision_size <- data.frame(size_object = round(as.numeric(object.size(df)) / 1024 / 1024, 1), 
+                               size_csv_file =  round(file.size("dataset.csv") / 1024 / 1024, 1), 
+                               size_fst_file =  round(file.size("dataset.fst") / 1024 / 1024, 1), 
+                               size_rds_file =  round(file.size("dataset.rds") / 1024 / 1024, 1)) 
+
+write_fst(comparision_size, "comparision_size.fst") 
+``` 
+
+```{r, eval = T} 
+library(tibble) 
+library(fst) 
+library(dplyr) 
+
+comparision_spd <- read_fst("comparision_spd.fst") 
+comparision_size <- read_fst("comparision_size.fst") 
+comparision_spd;comparision_size 
+
+``` 
+
+### 편리한 사용법(w/ pipe operator) 
+
+데이터를 전처리하는 경우 `%>%`(pipe operator)를 사용하여 쉽게 할 수 있는데, `write_rds()`함수 같이 `write.fst()`함수도 pipe operator을 연결하여 사용할 수 있다. 
+그런데 `read_fst()`함수로 불러오게 되면 `tibble`클래스가 사라지고 `data.frame`만 유지 되는데, `write_rds()`함수는 `tibble` 클래스가 사라지지 않는다. 용량 등 여러가지 장점이 있어서 `tibble` 클래스를 사용하려면 불러올 때 `as_tibble()`함수를 쓰면 위 문제는 해결된다. 
+
+```{r} 
+library(ggplot2) 
+library(dplyr) 
+library(readr) 
+
+# fst file 저장 
+diamonds %>%  
+    write_fst("diamond.fst") 
+
+diamonds_fst <- read_fst("diamond.fst") 
+
+# 데이터 확인 
+class(diamonds) 
+class(diamonds_fst) 
+
+# rds file 저장 
+diamonds %>%  
+    write_rds("diamond.rds") 
+
+diamonds_rds <- read_rds("diamond.rds") 
+
+# 데이터 확인 
+class(diamonds_rds) 
+
+``` 
+
+[fstRepo]: https://github.com/fstpackage/fst 
+[lz4Repo]: https://github.com/lz4/lz4 
+[zstdRepo]: https://github.com/facebook/zstd 
+[fstformatRepo]: https://github.com/xiaodaigh/fstformat.jl
